@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cartoon Quiz · Host</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bowlby+One&family=Nunito:wght@700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main class="wrap wide">
+
+  <section id="login" class="stack center" style="max-width:420px;margin:0 auto">
+    <h1 class="logo">Host login</h1>
+    <div class="card stack">
+      <input id="pw" type="password" placeholder="Admin password" autocomplete="current-password">
+      <div id="loginErr" class="err" role="alert"></div>
+      <button id="loginBtn" class="pink full">Enter</button>
+    </div>
+  </section>
+
+  <section id="panel" class="hidden stack">
+
+    <div id="vLobby" class="stack center">
+      <h1 class="logo">Cartoon Quiz</h1>
+      <div class="sub">Friends open this link and enter a username:</div>
+      <div><span class="urlbox" id="joinUrl"></span></div>
+      <div class="card stack" style="text-align:left">
+        <div class="qmeta"><h3>Players in the room</h3><span class="pill" id="lobbyCount">0</span></div>
+        <div class="chips" id="lobbyChips"></div>
+        <div class="sub" id="lobbyEmpty">Nobody has joined yet.</div>
+      </div>
+      <div><button id="startBtn" class="mint" disabled>Start quiz</button></div>
+      <div class="sub" id="qInfo"></div>
+    </div>
+
+    <div id="vQuestion" class="hidden">
+      <div class="grid2">
+        <div class="stack">
+          <div class="qmeta"><span class="pill" id="qNum"></span><span class="secs" id="secs">30</span></div>
+          <div class="timer" id="timer"><i></i></div>
+          <div class="qimg" id="imgBox"><img id="qImg" alt=""></div>
+          <div class="card center stack hidden" id="audioBox">
+            <div class="big" aria-hidden="true">🎧</div>
+            <audio id="hostAudio" controls preload="auto" style="width:100%"></audio>
+            <div class="sub">Theme-song round: play the clip for everyone (players hear it on their own device too).</div>
+          </div>
+          <div class="center sub">Answer: <b id="hostAns"></b></div>
+        </div>
+        <div class="stack">
+          <div class="card stack">
+            <div class="qmeta"><h3>Answered</h3><span class="pill" id="ansCount">0/0</span></div>
+            <div class="chips" id="ansChips"></div>
+          </div>
+          <button id="skipBtn" class="pink full">End question now</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="vReveal" class="hidden stack">
+      <div class="center stack">
+        <div class="sub" id="revNum"></div>
+        <div><span class="ans" id="revAns"></span></div>
+      </div>
+      <div class="grid2">
+        <div class="card stack">
+          <h3>Who got it</h3>
+          <div class="chips" id="revChips"></div>
+        </div>
+        <div class="card"><h3 style="margin-bottom:6px">Scoreboard</h3><ol class="lb" id="revLb"></ol></div>
+      </div>
+      <div class="center"><button id="nextBtn" class="mint">Next</button></div>
+    </div>
+
+    <div id="vFinished" class="hidden stack center">
+      <div class="crown">🏆</div>
+      <h1 class="logo" style="margin-top:0">Highest score</h1>
+      <div class="big" id="winners"></div>
+      <div class="card" style="text-align:left;max-width:560px;width:100%;margin:0 auto"><ol class="lb" id="finLb"></ol></div>
+      <div><button id="resetBtn" class="pink">Play again (keep players)</button></div>
+    </div>
+
+    <div class="center"><button id="resetSmall" class="ghost">Reset game</button></div>
+  </section>
+</main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const socket = io();
+let authed = false, state = null, endAt = 0, tick = null, lastQ = -2;
+$("joinUrl").textContent = location.origin;
+
+function login() {
+  socket.emit("admin:login", $("pw").value, (r) => {
+    if (r.ok) { authed = true; sessionStorage.setItem("cq_pw", $("pw").value); render(); }
+    else $("loginErr").textContent = "Wrong password.";
+  });
+}
+$("loginBtn").onclick = login;
+$("pw").addEventListener("keydown", (e) => e.key === "Enter" && login());
+socket.on("connect", () => { const p = sessionStorage.getItem("cq_pw"); if (p) socket.emit("admin:login", p, (r) => { if (r.ok) authed = true; render(); }); });
+socket.on("state", (s) => { state = s; render(); });
+
+$("startBtn").onclick = () => socket.emit("admin:next");
+$("nextBtn").onclick = () => socket.emit("admin:next");
+$("skipBtn").onclick = () => socket.emit("admin:skip");
+const reset = () => confirm("Reset scores and go back to the lobby?") && socket.emit("admin:reset");
+$("resetBtn").onclick = reset; $("resetSmall").onclick = reset;
+
+const chip = (p, cls = "", extra = "") => `<span class="chip ${cls} ${p.connected ? "" : "off"}">${esc(p.name)} ${extra}<button title="Remove ${esc(p.name)}" aria-label="Remove ${esc(p.name)}" data-kick="${p.id}">✕</button></span>`;
+document.addEventListener("click", (e) => { const id = e.target.dataset && e.target.dataset.kick; if (id && confirm("Remove this player?")) socket.emit("admin:kick", id); });
+
+function lb(list) { return list.map((p) => `<li class="${p.rank === 1 ? "first" : ""}"><span class="rk">${p.rank}</span><span class="nm">${esc(p.name)}</span><span class="sc">${p.score}</span></li>`).join(""); }
+
+function render() {
+  if (!state) return;
+  $("login").classList.toggle("hidden", authed);
+  $("panel").classList.toggle("hidden", !authed);
+  if (!authed || !state.admin) return;
+  const s = state;
+  for (const [id, ph] of [["vLobby","lobby"],["vQuestion","question"],["vReveal","reveal"],["vFinished","finished"]]) $(id).classList.toggle("hidden", s.phase !== ph);
+
+  if (s.phase === "lobby") {
+    $("lobbyCount").textContent = s.players.length;
+    $("lobbyEmpty").classList.toggle("hidden", s.players.length > 0);
+    $("lobbyChips").innerHTML = s.players.map((p) => chip(p)).join("");
+    $("startBtn").disabled = s.players.length === 0;
+    $("qInfo").textContent = `${s.total} questions (10 pictures, then 10 theme songs), ${s.seconds} seconds each, +1 per correct answer`;
+  }
+  if (s.phase === "question") {
+    if (lastQ !== s.index) {
+      lastQ = s.index;
+      const isAudio = !!s.question.audio;
+      $("imgBox").classList.toggle("hidden", isAudio);
+      $("audioBox").classList.toggle("hidden", !isAudio);
+      const ha = $("hostAudio");
+      if (isAudio) { ha.src = s.question.audio; ha.play().catch(() => {}); } else { ha.pause(); $("qImg").src = s.question.img; }
+    }
+    $("qNum").textContent = `Question ${s.index + 1} / ${s.total}`;
+    $("hostAns").textContent = s.correctAnswer;
+    const online = s.players.filter((p) => p.connected).length;
+    $("ansCount").textContent = `${s.answeredCount}/${s.players.length}`;
+    $("ansChips").innerHTML = s.players.map((p) => chip(p, p.answered ? "done" : "", p.answered ? "✓" : "<small>thinking…</small>")).join("");
+    endAt = Date.now() + s.remainingMs; startTick(s.seconds);
+  } else { stopTick(); $("hostAudio").pause(); }
+  if (s.phase === "reveal") {
+    $("revNum").textContent = `Question ${s.index + 1} / ${s.total}`;
+    $("revAns").textContent = s.correctAnswer;
+    $("revChips").innerHTML = s.players.map((p) => chip(p, p.answered ? (p.correct ? "right" : "wrong") : "wrong", p.answered ? `<small>${esc(p.text)}</small>` : "<small>no answer</small>")).join("");
+    $("revLb").innerHTML = lb(s.leaderboard.slice(0, 10));
+    $("nextBtn").textContent = s.index + 1 >= s.total ? "Show final results" : "Next question";
+  }
+  if (s.phase === "finished") {
+    $("winners").textContent = s.winners.length ? `${s.winners.join(" & ")} — ${s.topScore}/${s.total}` : "No players";
+    $("finLb").innerHTML = lb(s.leaderboard);
+  }
+}
+function startTick(total) {
+  stopTick();
+  const bar = $("timer").firstElementChild;
+  const run = () => {
+    const left = Math.max(0, endAt - Date.now());
+    $("secs").textContent = Math.ceil(left / 1000);
+    bar.style.width = (left / (total * 1000) * 100) + "%";
+    $("timer").classList.toggle("low", left < 10000);
+  };
+  run(); tick = setInterval(run, 200);
+}
+function stopTick() { clearInterval(tick); tick = null; }
+</script>
+</body>
+</html>
