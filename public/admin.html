@@ -113,7 +113,10 @@ $("resetBtn").onclick = reset; $("resetSmall").onclick = reset;
 const chip = (p, cls = "", extra = "") => `<span class="chip ${cls} ${p.connected ? "" : "off"}">${esc(p.name)} ${extra}<button title="Remove ${esc(p.name)}" aria-label="Remove ${esc(p.name)}" data-kick="${p.id}">✕</button></span>`;
 document.addEventListener("click", (e) => { const id = e.target.dataset && e.target.dataset.kick; if (id && confirm("Remove this player?")) socket.emit("admin:kick", id); });
 
-function lb(list) { return list.map((p) => `<li class="${p.rank === 1 ? "first" : ""}"><span class="rk">${p.rank}</span><span class="nm">${esc(p.name)}</span><span class="sc">${p.score}</span></li>`).join(""); }
+function lb(list) {
+  const top = list.length ? list[0].score : 0;
+  return list.map((p) => `<li class="${p.score === top && top > 0 ? "first" : ""}"><span class="nm">${esc(p.name)}</span><span class="sc">${p.score}</span></li>`).join("");
+}
 
 function render() {
   if (!state) return;

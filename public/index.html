@@ -116,7 +116,7 @@ socket.on("state", (s) => {
 function show(id) { for (const k of ["join","lobby","question","reveal","finished"]) $(k).classList.toggle("hidden", k !== id); }
 
 function lbHtml(list, meId) {
-  return list.map((p) => `<li class="${p.id === meId ? "me" : ""}"><span class="rk">${p.rank}</span><span class="nm">${esc(p.name)}</span><span class="sc">${p.score}</span></li>`).join("");
+  return list.map((p) => `<li class="${p.id === meId ? "me" : ""}"><span class="nm">${esc(p.name)}</span><span class="sc">${p.score}</span></li>`).join("");
 }
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -152,13 +152,14 @@ function render() {
     $("verdict").innerHTML = ok ? '<span class="good">Correct! +1</span>' : `<span class="bad">${s.me && s.me.text ? "Not quite! +0" : "Time's up! +0"}</span>`;
     $("yourAns").textContent = s.me && s.me.text ? `You answered: ${s.me.text}` : "You didn't answer in time";
     $("correctAns").textContent = s.correctAnswer;
-    $("revealLb").innerHTML = lbHtml(s.leaderboard.slice(0, 5), s.me && s.me.id) + (s.me && s.me.rank > 5 ? `<li class="me"><span class="rk">${s.me.rank}</span><span class="nm">${esc(myName)}</span><span class="sc">${s.me.score}</span></li>` : "");
+    const top5 = s.leaderboard.slice(0, 5), meId = s.me && s.me.id;
+    $("revealLb").innerHTML = lbHtml(top5, meId) + (s.me && !top5.some((p) => p.id === meId) ? lbHtml([{ id: meId, name: myName, score: s.me.score }], meId) : "");
     return;
   }
   if (s.phase === "finished") {
     show("finished");
     $("winners").textContent = s.winners.length ? s.winners.join(" & ") + ` (${s.topScore}/${s.total})` : "—";
-    $("myFinal").textContent = s.me ? `You finished #${s.me.rank} with ${s.me.score} point${s.me.score === 1 ? "" : "s"}` : "";
+    $("myFinal").textContent = s.me ? `Your score: ${s.me.score} / ${s.total}` : "";
     $("finalLb").innerHTML = lbHtml(s.leaderboard, s.me && s.me.id);
   }
 }
