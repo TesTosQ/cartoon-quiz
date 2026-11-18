@@ -30,13 +30,11 @@ const safeEq = (a, b) => {
   return A.length === B.length && crypto.timingSafeEqual(A, B);
 };
 
+// Scoreboard: highest score first (same score -> name A-Z). No place numbers, no tiebreaker.
 function ranked() {
-  const list = [...players.values()].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
-  let rank = 0, last = null;
-  return list.map((p, i) => {
-    if (p.score !== last) { rank = i + 1; last = p.score; }
-    return { id: p.id, name: p.name, score: p.score, rank };
-  });
+  return [...players.values()]
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+    .map((p) => ({ id: p.id, name: p.name, score: p.score }));
 }
 
 function stateFor(socket) {
@@ -73,8 +71,6 @@ function stateFor(socket) {
       const a = game.answers.get(me.id);
       s.me = { id: me.id, name: me.name, score: me.score, answered: !!a };
       if (game.phase === "reveal") { s.me.correct = a ? a.correct : false; s.me.text = a ? a.text : null; }
-      const lb = ranked().find((p) => p.id === me.id);
-      s.me.rank = lb ? lb.rank : null;
     }
   }
   return s;
@@ -139,7 +135,9 @@ io.on("connection", (socket) => {
     if (!text) return cb({ ok: false });
     const correct = isCorrect(text, QUESTIONS[game.q].answers);
     game.answers.set(p.id, { text, correct });
-    if (correct) p.score += 1; // +1 correct, +0 wrong
+    if (correct) {
+      p.score += 1; // +1 correct, +0 wrong
+    }
     cb({ ok: true });
     broadcast();
     checkAllAnswered();

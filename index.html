@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cartoon Quiz</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bowlby+One&family=Nunito:wght@700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main class="wrap">
+
+  <section id="join" class="stack center">
+    <h1 class="logo">Cartoon Quiz<small>Who's that character?</small></h1>
+    <div class="card stack">
+      <label for="name" class="sub">Pick a username</label>
+      <input id="name" type="text" maxlength="20" autocomplete="off" placeholder="e.g. PikachuFan">
+      <div id="joinErr" class="err" role="alert"></div>
+      <button id="joinBtn" class="pink full">Join game</button>
+    </div>
+  </section>
+
+  <section id="lobby" class="stack center hidden">
+    <h1 class="logo">You're in!</h1>
+    <div class="card stack">
+      <div class="big" id="lobbyName"></div>
+      <div class="sub">Waiting for the host to start<span class="dots"><span>.</span><span>.</span><span>.</span></span></div>
+      <div class="sub"><b id="lobbyCount">0</b> players in the room</div>
+    </div>
+  </section>
+
+  <section id="question" class="stack hidden">
+    <div class="qmeta"><span class="pill" id="qNum"></span><span class="secs" id="secs">30</span></div>
+    <div class="timer" id="timer"><i></i></div>
+    <div class="qimg" id="imgBox"><img id="qImg" alt="Cartoon character to guess"></div>
+    <div class="card center stack hidden" id="audioBox">
+      <div class="big" aria-hidden="true">🎧</div>
+      <button id="playBtn" type="button" class="mint full">Play the clip</button>
+      <div class="sub">5-second clip. Replay as many times as you like.</div>
+    </div>
+    <div class="big center" id="qPrompt"></div>
+    <form id="ansForm" class="stack" autocomplete="off">
+      <input id="ansInput" type="text" maxlength="80" placeholder="Type the cartoon name" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button class="pink full" id="ansBtn" type="submit">Lock in answer</button>
+    </form>
+    <div id="locked" class="card center hidden">
+      <div class="big">Answer locked in</div>
+      <div class="sub">Waiting for the timer or other players<span class="dots"><span>.</span><span>.</span><span>.</span></span></div>
+    </div>
+  </section>
+
+  <section id="reveal" class="stack center hidden">
+    <div class="verdict" id="verdict"></div>
+    <div class="sub" id="yourAns"></div>
+    <div class="sub">The answer was</div>
+    <div><span class="ans" id="correctAns"></span></div>
+    <div class="card">
+      <h3 class="center" style="margin-bottom:6px">Scoreboard</h3>
+      <ol class="lb" id="revealLb"></ol>
+    </div>
+    <div class="sub">Next question coming up when the host is ready<span class="dots"><span>.</span><span>.</span><span>.</span></span></div>
+  </section>
+
+  <section id="finished" class="stack center hidden">
+    <div class="crown">🏆</div>
+    <h1 class="logo" style="margin-top:0">Game over!</h1>
+    <div class="card stack">
+      <div class="sub">Highest score</div>
+      <div class="big" id="winners"></div>
+      <div class="sub" id="myFinal"></div>
+    </div>
+    <div class="card"><h3 class="center" style="margin-bottom:6px">Final scoreboard</h3><ol class="lb" id="finalLb"></ol></div>
+  </section>
+
+</main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const socket = io();
+let pid = localStorage.getItem("cq_id");
+if (!pid) { pid = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now()); localStorage.setItem("cq_id", pid); }
+let myName = localStorage.getItem("cq_name") || "";
+let joined = false, state = null, endAt = 0, tick = null, lastQ = -2;
+
+$("name").value = myName;
+
+// one shared audio element, "unlocked" by the Join tap so phones allow sound later
+const clip = new Audio(); clip.preload = "auto";
+function unlockAudio() {
+  clip.muted = true; clip.src = "/audio/s1.mp3";
+  const done = () => { clip.pause(); clip.currentTime = 0; clip.muted = false; };
+  const pr = clip.play(); if (pr && pr.then) pr.then(done).catch(done);
+}
+function playClip() { clip.muted = false; clip.currentTime = 0; const pr = clip.play(); if (pr && pr.catch) pr.catch(() => {}); }
+$("playBtn").onclick = playClip;
+
+function join(auto) {
+  const name = $("name").value.trim();
+  if (!name) { $("joinErr").textContent = "Enter a username first."; return; }
+  socket.emit("join", { id: pid, name }, (res) => {
+    if (!res.ok) { joined = false; $("joinErr").textContent = res.error; render(); return; }
+    joined = true; myName = name; localStorage.setItem("cq_name", name); $("joinErr").textContent = ""; render();
+  });
+}
+$("joinBtn").onclick = () => { unlockAudio(); join(false); };
+$("name").addEventListener("keydown", (e) => { if (e.key === "Enter") { unlockAudio(); join(false); } });
+socket.on("connect", () => { if (myName) join(true); });
+socket.on("kicked", () => { joined = false; $("joinErr").textContent = "The host removed you from the game."; render(); });
+socket.on("state", (s) => {
+  state = s;
+  render();
+});
+
+function show(id) { for (const k of ["join","lobby","question","reveal","finished"]) $(k).classList.toggle("hidden", k !== id); }
+
+function lbHtml(list, meId) {
+  return list.map((p) => `<li class="${p.id === meId ? "me" : ""}"><span class="nm">${esc(p.name)}</span><span class="sc">${p.score}</span></li>`).join("");
+}
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function render() {
+  if (!state) return;
+  const s = state;
+  if (!joined) { show("join"); return; }
+  if (s.phase === "lobby") { show("lobby"); $("lobbyName").textContent = myName; $("lobbyCount").textContent = s.playerCount; return; }
+  if (s.phase === "question") {
+    show("question");
+    if (lastQ !== s.index) {
+      lastQ = s.index;
+      const isAudio = !!s.question.audio;
+      $("imgBox").classList.toggle("hidden", isAudio);
+      $("audioBox").classList.toggle("hidden", !isAudio);
+      if (isAudio) { clip.src = s.question.audio; playClip(); } else { clip.pause(); $("qImg").src = s.question.img; }
+      $("qPrompt").textContent = s.question.prompt;
+      $("qNum").textContent = `Question ${s.index + 1} / ${s.total}`;
+      $("ansInput").value = "";
+    }
+    const answered = s.me && s.me.answered;
+    $("ansForm").classList.toggle("hidden", answered);
+    $("locked").classList.toggle("hidden", !answered);
+    endAt = Date.now() + s.remainingMs;
+    startTick(s.seconds);
+    if (!answered) setTimeout(() => $("ansInput").focus(), 50);
+    return;
+  }
+  stopTick(); clip.pause();
+  if (s.phase === "reveal") {
+    show("reveal");
+    const ok = s.me && s.me.correct;
+    $("verdict").innerHTML = ok ? '<span class="good">Correct! +1</span>' : `<span class="bad">${s.me && s.me.text ? "Not quite! +0" : "Time's up! +0"}</span>`;
+    $("yourAns").textContent = s.me && s.me.text ? `You answered: ${s.me.text}` : "You didn't answer in time";
+    $("correctAns").textContent = s.correctAnswer;
+    const top5 = s.leaderboard.slice(0, 5), meId = s.me && s.me.id;
+    $("revealLb").innerHTML = lbHtml(top5, meId) + (s.me && !top5.some((p) => p.id === meId) ? lbHtml([{ id: meId, name: myName, score: s.me.score }], meId) : "");
+    return;
+  }
+  if (s.phase === "finished") {
+    show("finished");
+    $("winners").textContent = s.winners.length ? s.winners.join(" & ") + ` (${s.topScore}/${s.total})` : "—";
+    $("myFinal").textContent = s.me ? `Your score: ${s.me.score} / ${s.total}` : "";
+    $("finalLb").innerHTML = lbHtml(s.leaderboard, s.me && s.me.id);
+  }
+}
+
+function startTick(total) {
+  stopTick();
+  const bar = $("timer").firstElementChild;
+  const run = () => {
+    const left = Math.max(0, endAt - Date.now());
+    $("secs").textContent = Math.ceil(left / 1000);
+    bar.style.width = (left / (total * 1000) * 100) + "%";
+    $("timer").classList.toggle("low", left < 10000);
+  };
+  run(); tick = setInterval(run, 200);
+}
+function stopTick() { clearInterval(tick); tick = null; }
+
+$("ansForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const v = $("ansInput").value.trim();
+  if (!v) return;
+  $("ansBtn").disabled = true;
+  socket.emit("answer", v, () => { $("ansBtn").disabled = false; });
+});
+</script>
+</body>
+</html>
